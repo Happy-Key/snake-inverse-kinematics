@@ -1,0 +1,95 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+
+
+struct Circle
+{
+    float3 position;
+    float radius;
+};
+
+float time;
+
+RWTexture2D<float4> Result;
+float resolutionX;
+float resolutionY;
+StructuredBuffer<Circle> segments;
+float numSegments;
+StructuredBuffer<Circle> apples;
+float numApples;
+float minX;
+float maxX;
+float minY;
+float maxY;
+float softness;
+
+float4 lineStart;
+float4 lineEnd;
+
+float4 WallpaperColor(float2 id) {
+    return float4(0.5, 0.7, 0.8, 1);
+}
+
+float4 BackgroundColor(float2 id, float2 uv, float3 wp) {
+    if (length(Result[id.xy] - float4(1,1,1,1)) > 0.8) {
+        if (wp.x < minX || wp.x > maxX || wp.y < minY || wp.y > maxY) return WallpaperColor(id.xy) * 0.1;
+        return WallpaperColor(id.xy);
+    }
+    return Result[id.xy];
+}
+
+float4 PixelColor(float3 id) {
+    float2 uv = float2(id.x / resolutionX, id.y / resolutionY);
+    float3 wp = float3(uv.x * (maxX - minX) + minX, uv.y * (maxY - minY) + minY, 0);
+    if ((maxX - minX) / resolutionX > (maxY - minY) / resolutionY) {
+        wp *= float3(1, (maxX - minX) * resolutionY / (maxY - minY) / resolutionX, 0);
+    }
+    if ((maxX - minX) / resolutionX < (maxY - minY) / resolutionY) {
+        wp *= float3((maxY - minY) * resolutionX / (maxX - minX) / resolutionY, 1, 0);
+    }
+
+    const float lineWidth = 0.05;
+
+    bool inLine = wp.x >= min(lineStart.x, lineEnd.x) && wp.x <= max(lineStart.x, lineEnd.x) && wp.y >= min(lineStart.y, lineEnd.y) && wp.y <= max(lineStart.y, lineEnd.y);
+    if (abs(lineEnd.y - lineStart.y) < lineWidth && abs(lineStart.y - wp.y) < lineWidth && wp.x >= min(lineStart.x, lineEnd.x) && wp.x <= max(lineStart.x, lineEnd.x)) {
+        return float4(0, 0, 0, 1);
+    }
+    if (abs(lineEnd.x - lineStart.x) < lineWidth && abs(lineStart.x - wp.x) < lineWidth && wp.y >= min(lineStart.y, lineEnd.y) && wp.y <= max(lineStart.y, lineEnd.y)) {
+        return float4(0, 0, 0, 1);
+    }
+    if (inLine) {
+        if (abs((lineEnd.y - lineStart.y) / (lineEnd.x - lineStart.x)) > 1) {
+            if (abs((lineEnd.x - lineStart.x) / (lineEnd.y - lineStart.y) * (wp.y - lineStart.y) + lineStart.x - wp.x) < lineWidth) {
+                return float4(0, 0, 0, 1);
+            }
+        }
+        else {
+            if (abs((lineEnd.y - lineStart.y) / (lineEnd.x - lineStart.x) * (wp.x - lineStart.x) + lineStart.y - wp.y) < lineWidth) {
+                return float4(0, 0, 0, 1);
+            }
+        }
+    }
+
+    for (int j = 0; j < numApples; j++) {
+        float appleSD = length(wp - apples[j].position) - apples[j].radius;
+        if (appleSD < 0) return float4(1, 0, 0, 1);
+    }
+
+    float4 snakeColor;
+    snakeColor = float4(0, 1, 0, 1);
+
+    float snakeSD = 1;
+    for (int i = 0; i < numSegments; i++) {
+        float signedDistance = length(wp - segments[i].position) - segments[i].radius / 2.;
+        if (signedDistance < snakeSD) snakeSD = signedDistance;
+    }
+    if (snakeSD < 0) return snakeColor;
+
+    return BackgroundColor(id.xy, uv, wp);
+}
+
+[numthreads(8,8,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    Result[id.xy] = PixelColor(id);
+}
